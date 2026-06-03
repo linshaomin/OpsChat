@@ -1,0 +1,783 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>OpsChat - AI Ops 智能运维助手</title>
+    <script src="https://unpkg.com/vue@3.4.21/dist/vue.global.prod.js"></script>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        :root {
+            --primary-color: #00d4ff;
+            --secondary-color: #00b8e6;
+            --bg-dark: #1e1e1e;
+            --bg-card: #2a2a2a;
+            --bg-sidebar: #1a1a1a;
+            --bg-message: #333;
+            --border-color: #333;
+            --hover-bg: #323232;
+        }
+        
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background-color: var(--bg-dark);
+        }
+        
+        .scrollbar-thin::-webkit-scrollbar {
+            width: 6px;
+        }
+        
+        .scrollbar-thin::-webkit-scrollbar-track {
+            background: transparent;
+        }
+        
+        .scrollbar-thin::-webkit-scrollbar-thumb {
+            background: #444;
+            border-radius: 3px;
+        }
+        
+        .message-content pre {
+            background: #1a1a1a;
+            padding: 12px;
+            border-radius: 8px;
+            overflow-x: auto;
+            margin: 8px 0;
+            border: 1px solid #333;
+        }
+        
+        .message-content code {
+            font-family: 'Monaco', 'Menlo', monospace;
+            font-size: 0.9em;
+        }
+        
+        .message-content p code {
+            background: #333;
+            padding: 2px 6px;
+            border-radius: 4px;
+        }
+
+        textarea {
+            resize: none;
+        }
+
+        .sidebar-btn {
+            transition: all 0.2s ease;
+        }
+
+        .sidebar-btn:hover {
+            background-color: var(--hover-bg);
+        }
+
+        .sidebar-btn.active {
+            background-color: var(--hover-bg);
+            border-left: 2px solid var(--primary-color);
+        }
+    </style>
+</head>
+<body class="bg-[var(--bg-dark)] text-white h-screen flex overflow-hidden">
+    <div id="app" class="w-full h-full flex">
+        <!-- Sidebar - Sessions List -->
+        <aside 
+            class="w-72 flex-shrink-0 bg-[var(--bg-sidebar)] border-r border-gray-800 flex flex-col transition-all duration-300"
+            :class="{ '-ml-72': !showSidebar && !isMobile }"
+        >
+            <!-- New Chat Button -->
+            <div class="p-3">
+                <button 
+                    @click="newChat"
+                    class="w-full flex items-center gap-3 px-4 py-3 bg-gray-800 hover:bg-gray-700 rounded-lg transition-colors text-gray-200"
+                >
+                    <span class="w-8 h-8 rounded-full bg-[var(--primary-color)] flex items-center justify-center text-sm font-bold text-gray-900">+</span>
+                    <span>新对话</span>
+                </button>
+            </div>
+
+            <!-- Divider -->
+            <div class="border-t border-gray-800 mx-3"></div>
+
+            <!-- Sessions List -->
+            <div class="flex-1 overflow-y-auto p-2 scrollbar-thin">
+                <div 
+                    v-for="session in sessions" 
+                    :key="session.id"
+                    @click="switchSession(session.id)"
+                    class="sidebar-btn px-3 py-2.5 rounded-lg cursor-pointer flex items-start gap-3 mb-1"
+                    :class="{ 'active': session.id === currentSessionId }"
+                >
+                    <span class="text-lg flex-shrink-0">💬</span>
+                    <div class="flex-1 min-w-0">
+                        <p class="text-sm text-gray-200 truncate">{{ session.title || '无标题' }}</p>
+                        <p class="text-xs text-gray-500 truncate mt-0.5">{{ session.lastMessage || '点击开始对话' }}</p>
+                    </div>
+                    <button 
+                        @click.stop="deleteSession(session.id)"
+                        class="opacity-0 group-hover:opacity-100 p-1 hover:bg-gray-700 rounded transition-all"
+                    >
+                        <span class="text-gray-400 hover:text-red-400">×</span>
+                    </button>
+                </div>
+                <div v-if="sessions.length === 0" class="px-3 py-8 text-center text-gray-500">
+                    <p class="text-lg mb-2">🤖</p>
+                    <p class="text-sm">暂无对话</p>
+                    <p class="text-xs mt-1">点击"新对话"开始</p>
+                </div>
+            </div>
+
+            <!-- Sidebar Footer -->
+            <div class="border-t border-gray-800 p-3">
+                <div class="flex items-center gap-3 px-2 py-2 hover:bg-gray-800 rounded-lg cursor-pointer transition-colors">
+                    <span class="text-xl">👤</span>
+                    <div>
+                        <p class="text-sm text-gray-200">OpsChat 用户</p>
+                        <p class="text-xs text-gray-500">admin@opschat.com</p>
+                    </div>
+                </div>
+            </div>
+        </aside>
+
+        <!-- Main Chat Area -->
+        <main class="flex-1 flex flex-col overflow-hidden">
+            <!-- Mobile Header -->
+            <header class="md:hidden flex items-center justify-between px-4 py-3 bg-[var(--bg-sidebar)] border-b border-gray-800">
+                <button @click="showSidebar = !showSidebar" class="p-2 hover:bg-gray-800 rounded-lg">
+                    <span class="text-xl">☰</span>
+                </button>
+                <h1 class="text-lg font-semibold text-gray-200">🤖 OpsChat</h1>
+                <div class="w-10"></div>
+            </header>
+
+            <!-- Desktop Header -->
+            <header class="hidden md:flex justify-between items-center px-6 py-3 border-b border-gray-800">
+                <h1 class="text-lg font-semibold text-gray-200">🤖 OpsChat</h1>
+                <div class="flex gap-3">
+                    <button 
+                        @click="clearChat"
+                        class="px-4 py-2 text-sm text-gray-300 bg-gray-800 border border-gray-700 rounded-lg hover:bg-gray-700 transition-colors"
+                    >
+                        清空对话
+                    </button>
+                </div>
+            </header>
+
+            <!-- Chat Messages -->
+            <div 
+                ref="messagesContainer"
+                class="flex-1 overflow-y-auto p-4 md:p-6 space-y-4 scrollbar-thin"
+            >
+                <!-- Empty State -->
+                <div v-if="messages.length === 0" class="h-full flex flex-col items-center justify-center text-gray-500 px-4">
+                    <div class="text-6xl mb-6">🤖</div>
+                    <h2 class="text-xl font-semibold text-gray-300 mb-4">欢迎使用 OpsChat</h2>
+                    <p class="text-center max-w-md leading-relaxed mb-6 text-gray-400">
+                        OpsChat 是一个 AI Ops 智能运维助手，可以帮助您：
+                    </p>
+                    <ul class="text-left text-gray-400 text-sm space-y-2 mb-6">
+                        <li>• 回答运维相关问题</li>
+                        <li>• 查询系统日志和监控指标</li>
+                        <li>• 检索技术文档和SOP</li>
+                        <li>• 分析故障根因</li>
+                    </ul>
+                    <div class="flex flex-wrap gap-3 justify-center">
+                        <button 
+                            v-for="example in examples" 
+                            :key="example"
+                            @click="sendExample(example)"
+                            class="px-4 py-2 bg-[var(--bg-card)] border border-[var(--border-color)] text-[var(--primary-color)] rounded-full hover:bg-gray-700 transition-colors text-sm"
+                        >
+                            {{ example }}
+                        </button>
+                    </div>
+                </div>
+
+                <!-- Messages List -->
+                <template v-for="(msg, index) in messages" :key="index">
+                    <div 
+                        class="flex gap-4 py-3"
+                        :class="msg.role === 'user' ? 'flex-row-reverse' : ''"
+                    >
+                        <div 
+                            v-if="index === 0 || messages[index - 1].role !== msg.role"
+                            class="w-10 h-10 rounded-full flex items-center justify-center text-sm flex-shrink-0"
+                            :class="msg.role === 'user' ? 'bg-gray-600' : 'bg-[var(--primary-color)]'"
+                        >
+                            {{ msg.role === 'user' ? '👤' : '🤖' }}
+                        </div>
+                        <div v-else class="w-10 flex-shrink-0"></div>
+                        
+                        <div 
+                            class="max-w-[75%] py-3 px-4 rounded-2xl message-content"
+                            :class="[
+                                msg.role === 'user' ? 'bg-[var(--primary-color)] text-gray-900' : 'bg-[var(--bg-message)] text-gray-100',
+                                index > 0 && messages[index - 1].role === msg.role ? 'rounded-t-none' : ''
+                            ]"
+                        >
+                            <div v-html="formatMarkdown(msg.content)"></div>
+                            
+                            <!-- Tool Events -->
+                            <div v-if="msg.events && msg.events.length" class="mt-3 space-y-2">
+                                <div 
+                                    v-for="(event, i) in msg.events" 
+                                    :key="i"
+                                    class="text-xs py-2 px-3 rounded-lg text-gray-400"
+                                    :class="getEventClass(event.type)"
+                                >
+                                    <span class="mr-2">{{ getEventIcon(event.type) }}</span>
+                                    {{ event.content }}
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Typing Indicator (only show after assistant messages) -->
+                    <div v-if="isStreaming && index === messages.length - 1 && msg.role === 'assistant'" class="flex gap-4 py-3">
+                        <div v-if="messages.length === 1 || messages[index - 1].role !== 'assistant'" class="w-10 h-10 rounded-full bg-[var(--primary-color)] flex items-center justify-center text-sm flex-shrink-0">🤖</div>
+                        <div v-else class="w-10 flex-shrink-0"></div>
+                        <div class="bg-[var(--bg-message)] rounded-2xl px-4 py-3 rounded-t-none">
+                            <div class="flex gap-1">
+                                <span class="w-2 h-2 bg-gray-400 rounded-full animate-bounce" style="animation-delay: 0ms;"></span>
+                                <span class="w-2 h-2 bg-gray-400 rounded-full animate-bounce" style="animation-delay: 150ms;"></span>
+                                <span class="w-2 h-2 bg-gray-400 rounded-full animate-bounce" style="animation-delay: 300ms;"></span>
+                            </div>
+                        </div>
+                    </div>
+                </template>
+            </div>
+
+            <!-- Input Area -->
+            <div class="p-4 border-t border-gray-800 bg-[var(--bg-sidebar)]">
+                <div class="max-w-4xl mx-auto flex flex-col gap-3">
+                    <!-- Upload Status -->
+                    <div v-if="uploadStatus" class="text-sm" :class="uploadStatusClass">
+                        {{ uploadStatus }}
+                    </div>
+                    
+                    <!-- Input Row -->
+                    <div class="flex gap-3">
+                        <!-- File Upload -->
+                        <label class="group flex items-center gap-2 px-4 py-3 bg-gray-800 border border-gray-700 rounded-xl cursor-pointer hover:bg-gray-700 hover:border-[var(--primary-color)] transition-all flex-shrink-0">
+                            <svg class="w-5 h-5 text-gray-400 group-hover:text-[var(--primary-color)] transition-colors" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12"></path>
+                            </svg>
+                            <span class="text-sm text-gray-300 group-hover:text-white transition-colors">知识库上传</span>
+                            <input 
+                                type="file" 
+                                class="hidden"
+                                accept=".txt,.md"
+                                @change="handleFileUpload"
+                                ref="fileInput"
+                            />
+                        </label>
+
+                        <!-- Text Input -->
+                        <div class="flex-1 relative">
+                            <textarea
+                                v-model="inputMessage"
+                                placeholder="输入您的问题..."
+                                rows="1"
+                                @keydown.enter.exact="handleEnterKey"
+                                @keydown.enter.shift="handleShiftEnter"
+                                class="w-full bg-gray-800 border border-gray-700 rounded-xl px-4 py-3 outline-none focus:border-[var(--primary-color)] text-white placeholder-gray-500 transition-colors"
+                                :disabled="isStreaming"
+                                style="min-height: 48px; max-height: 150px;"
+                            ></textarea>
+                        </div>
+
+                        <!-- Send Button -->
+                        <button
+                            @click="sendMessage"
+                            :disabled="!inputMessage.trim() || isStreaming"
+                            class="px-6 py-3 bg-[var(--primary-color)] text-gray-900 font-medium rounded-xl hover:bg-[var(--secondary-color)] transition-colors disabled:bg-gray-700 disabled:text-gray-500 disabled:cursor-not-allowed flex items-center gap-2 flex-shrink-0"
+                        >
+                            <span v-if="isStreaming" class="animate-spin">⏳</span>
+                            <span v-else>➤</span>
+                        </button>
+                    </div>
+
+                    <!-- Hint -->
+                    <p class="text-xs text-gray-500 text-center">
+                        按 Enter 发送，Shift + Enter 换行
+                    </p>
+                </div>
+            </div>
+        </main>
+
+        <!-- Mobile Sidebar Overlay -->
+        <div 
+            v-if="showSidebar && isMobile"
+            class="fixed inset-0 bg-black/60 z-40"
+            @click="showSidebar = false"
+        ></div>
+
+        <!-- Upload Modal -->
+        <Teleport to="body">
+            <div 
+                v-if="showUploadModal"
+                class="fixed inset-0 z-50 flex items-center justify-center"
+                @click.self="closeUploadModal"
+            >
+                <div class="absolute inset-0 bg-black/60 backdrop-blur-sm"></div>
+                
+                <div 
+                    class="relative bg-gray-800 border border-gray-700 rounded-xl shadow-2xl p-6 w-80 transform transition-all"
+                >
+                    <div class="flex justify-center mb-4">
+                        <div 
+                            class="w-16 h-16 rounded-full flex items-center justify-center text-3xl"
+                            :class="{
+                                'bg-blue-500/20': uploadModalType === 'uploading',
+                                'bg-green-500/20': uploadModalType === 'success',
+                                'bg-red-500/20': uploadModalType === 'error'
+                            }"
+                        >
+                            <span v-if="uploadModalType === 'uploading'" class="animate-spin">⏳</span>
+                            <span v-else-if="uploadModalType === 'success'">✅</span>
+                            <span v-else>❌</span>
+                        </div>
+                    </div>
+
+                    <h3 
+                        class="text-lg font-semibold text-center mb-2"
+                        :class="{
+                            'text-blue-400': uploadModalType === 'uploading',
+                            'text-green-400': uploadModalType === 'success',
+                            'text-red-400': uploadModalType === 'error'
+                        }"
+                    >
+                        {{ uploadModalType === 'uploading' ? '上传中' : uploadModalType === 'success' ? '上传成功' : '上传失败' }}
+                    </h3>
+                    
+                    <p class="text-gray-400 text-center text-sm whitespace-pre-line">
+                        {{ uploadModalMessage }}
+                    </p>
+                    
+                    <div v-if="uploadModalType !== 'uploading'" class="mt-6 flex justify-center">
+                        <button 
+                            @click="closeUploadModal"
+                            class="px-6 py-2 bg-gray-700 text-white rounded-lg hover:bg-gray-600 transition-colors"
+                        >
+                            确定
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </Teleport>
+    </div>
+
+    <script>
+        const { createApp, ref, nextTick, onMounted, onUnmounted, computed } = Vue;
+
+        createApp({
+            setup() {
+                const messages = ref([]);
+                const inputMessage = ref('');
+                const isStreaming = ref(false);
+                const currentSessionId = ref(null);
+                const showSidebar = ref(true);
+                const sessions = ref([]);
+                const uploadStatus = ref('');
+                const uploadStatusClass = ref('text-gray-500');
+                const lastContentIndex = ref(-1);
+                const messagesContainer = ref(null);
+                const fileInput = ref(null);
+                const isMobile = ref(false);
+                
+                // Upload Modal
+                const showUploadModal = ref(false);
+                const uploadModalType = ref('uploading');
+                const uploadModalMessage = ref('');
+
+                const examples = [
+                    '服务器CPU占用率高怎么办？',
+                    '查看日志',
+                    '现在几点了？',
+                    '订单8383的状态'
+                ];
+
+                const checkMobile = () => {
+                    isMobile.value = window.innerWidth < 768;
+                    if (isMobile.value) {
+                        showSidebar.value = false;
+                    }
+                };
+
+                onMounted(() => {
+                    checkMobile();
+                    window.addEventListener('resize', checkMobile);
+                    loadSessions();
+                });
+
+                onUnmounted(() => {
+                    window.removeEventListener('resize', checkMobile);
+                });
+
+                const scrollToBottom = async () => {
+                    await nextTick();
+                    if (messagesContainer.value) {
+                        messagesContainer.value.scrollTop = messagesContainer.value.scrollHeight;
+                    }
+                };
+
+                const sendMessage = async () => {
+                    const question = inputMessage.value.trim();
+                    if (!question || isStreaming.value) return;
+
+                    inputMessage.value = '';
+                    isStreaming.value = true;
+                    
+                    messages.value.push({
+                        role: 'user',
+                        content: question,
+                        events: []
+                    });
+
+                    const assistantIndex = messages.value.push({
+                        role: 'assistant',
+                        content: '',
+                        events: []
+                    }) - 1;
+
+                    lastContentIndex.value = -1;
+
+                    try {
+                        const response = await fetch('/api/v1/chat/stream', {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({ 
+                                id: currentSessionId.value, 
+                                question: question 
+                            })
+                        });
+
+                        if (!response.ok) {
+                            throw new Error(`HTTP error! status: ${response.status}`);
+                        }
+
+                        const reader = response.body.getReader();
+                        const decoder = new TextDecoder();
+                        let buffer = '';
+
+                        while (true) {
+                            const { done, value } = await reader.read();
+                            if (done) break;
+
+                            buffer += decoder.decode(value, { stream: true });
+                            buffer = await processStream(buffer, assistantIndex);
+                        }
+                    } catch (error) {
+                        messages.value[assistantIndex].content = `<span class="text-red-400">❌ ${error.message}</span>`;
+                    } finally {
+                        isStreaming.value = false;
+                        // 刷新会话列表以获取最新标题
+                        loadSessions();
+                    }
+                };
+
+                const handleEnterKey = (e) => {
+                    if (e.isComposing || e.keyCode === 229) {
+                        return;
+                    }
+                    e.preventDefault();
+                    sendMessage();
+                };
+
+                const handleShiftEnter = (e) => {
+                    e.preventDefault();
+                    const textarea = e.target;
+                    const start = textarea.selectionStart;
+                    const end = textarea.selectionEnd;
+                    inputMessage.value = inputMessage.value.substring(0, start) + '\n' + inputMessage.value.substring(end);
+                    nextTick(() => {
+                        textarea.selectionStart = textarea.selectionEnd = start + 1;
+                    });
+                };
+
+                const processStream = async (data, assistantIndex) => {
+                    const lines = data.split('\n');
+                    let remainingBuffer = '';
+
+                    for (let i = 0; i < lines.length; i++) {
+                        const line = lines[i].trim();
+                        if (line.startsWith('data:')) {
+                            try {
+                                const jsonStr = line.substring(5).trim();
+                                if (jsonStr) {
+                                    const eventData = JSON.parse(jsonStr);
+                                    await handleStreamEvent(eventData, assistantIndex);
+                                }
+                            } catch (e) {
+                                console.warn('解析SSE数据失败:', e);
+                            }
+                        } else if (i === lines.length - 1) {
+                            remainingBuffer = lines[i];
+                        }
+                    }
+
+                    return remainingBuffer;
+                };
+
+                const handleStreamEvent = async (event, assistantIndex) => {
+                    const msg = messages.value[assistantIndex];
+
+                    switch (event.type) {
+                        case 'content':
+                            if (event.index !== undefined && event.index <= lastContentIndex.value) {
+                                return;
+                            }
+                            
+                            if (event.index !== undefined) {
+                                lastContentIndex.value = event.index;
+                            }
+                            
+                            msg.content += event.content;
+                            break;
+                        
+                        case 'sessionId':
+                            currentSessionId.value = event.content;
+                            break;
+                        
+                        case 'tool_call':
+                        case 'tool_result':
+                        case 'trace':
+                            if (!msg.events) msg.events = [];
+                            msg.events.push({
+                                type: event.type,
+                                content: event.content
+                            });
+                            break;
+                        
+                        case 'search_result':
+                            if (!msg.events) msg.events = [];
+                            const exists = msg.events.some(e => e.type === 'search_result' && e.content === event.content);
+                            if (!exists) {
+                                msg.events.push({
+                                    type: event.type,
+                                    content: event.content
+                                });
+                            }
+                            break;
+                        
+                        case 'error':
+                            msg.content = `<span class="text-red-400">❌ ${event.content}</span>`;
+                            break;
+                        
+                        case 'done':
+                            break;
+                    }
+
+                    await scrollToBottom();
+                };
+
+                const sendExample = (question) => {
+                    inputMessage.value = question;
+                    sendMessage();
+                };
+
+                const clearChat = () => {
+                    messages.value = [];
+                    currentSessionId.value = null;
+                };
+
+                const newChat = () => {
+                    messages.value = [];
+                    currentSessionId.value = null;
+                    if (isMobile.value) {
+                        showSidebar.value = false;
+                    }
+                };
+
+                const loadSessions = async () => {
+                    try {
+                        const response = await fetch('/api/v1/sessions');
+                        const data = await response.json();
+                        if (data.code === 200 && data.data) {
+                            sessions.value = data.data.map(session => ({
+                                id: session.sessionId,
+                                title: session.title || '无标题',
+                                lastMessage: session.lastActiveAt || session.messageHistory?.slice(-2)[0]?.content || '点击查看详情'
+                            }));
+                        }
+                    } catch (error) {
+                        console.error('获取会话列表失败:', error);
+                    }
+                };
+
+                const updateSessionLastMessage = async (question) => {
+                    if (!currentSessionId.value) return;
+                    
+                    const sessionIndex = sessions.value.findIndex(s => s.id === currentSessionId.value);
+                    if (sessionIndex !== -1) {
+                        sessions.value[sessionIndex].lastMessage = question;
+                        if (!sessions.value[sessionIndex].title) {
+                            sessions.value[sessionIndex].title = question.substring(0, 30) + (question.length > 30 ? '...' : '');
+                        }
+                    } else {
+                        sessions.value.unshift({
+                            id: currentSessionId.value,
+                            title: question.substring(0, 30) + (question.length > 30 ? '...' : ''),
+                            lastMessage: question
+                        });
+                    }
+                };
+
+                const switchSession = async (sessionId) => {
+                    currentSessionId.value = sessionId;
+                    messages.value = [];
+                    if (isMobile.value) {
+                        showSidebar.value = false;
+                    }
+                    
+                    try {
+                        const response = await fetch(`/api/v1/sessions/${sessionId}`);
+                        const data = await response.json();
+                        if (data.code === 200 && data.data) {
+                            data.data.forEach(msg => {
+                                messages.value.push({
+                                    role: msg.role,
+                                    content: msg.content,
+                                    events: []
+                                });
+                            });
+                        }
+                    } catch (error) {
+                        console.error('加载会话历史失败:', error);
+                    }
+                };
+
+                const deleteSession = async (sessionId) => {
+                    if (!confirm('确定要删除这个会话吗？')) return;
+                    
+                    try {
+                        const response = await fetch(`/api/v1/sessions/${sessionId}`, {
+                            method: 'DELETE'
+                        });
+                        const data = await response.json();
+                        if (data.code === 200) {
+                            sessions.value = sessions.value.filter(s => s.id !== sessionId);
+                            if (currentSessionId.value === sessionId) {
+                                currentSessionId.value = null;
+                                messages.value = [];
+                            }
+                        }
+                    } catch (error) {
+                        console.error('删除会话失败:', error);
+                    }
+                };
+
+                const showUploadModalPopup = (type, message) => {
+                    uploadModalType.value = type;
+                    uploadModalMessage.value = message;
+                    showUploadModal.value = true;
+                    
+                    if (type !== 'uploading') {
+                        setTimeout(() => {
+                            showUploadModal.value = false;
+                        }, 3000);
+                    }
+                };
+
+                const closeUploadModal = () => {
+                    showUploadModal.value = false;
+                };
+
+                const handleFileUpload = async (event) => {
+                    const files = event.target.files;
+                    if (!files || files.length === 0) return;
+
+                    showUploadModalPopup('uploading', '正在上传文件...');
+
+                    const formData = new FormData();
+                    formData.append('file', files[0]);
+
+                    try {
+                        const response = await fetch('/api/upload', {
+                            method: 'POST',
+                            body: formData
+                        });
+
+                        const data = await response.json();
+                        if (data.code === 200) {
+                            showUploadModalPopup('success', `文件上传成功!\n${data.data.fileName}`);
+                            uploadStatus.value = `✅ 上传成功: ${data.data.fileName}`;
+                            uploadStatusClass.value = 'text-green-400';
+                        } else {
+                            showUploadModalPopup('error', `上传失败: ${data.message}`);
+                            uploadStatus.value = `❌ 上传失败: ${data.message}`;
+                            uploadStatusClass.value = 'text-red-400';
+                        }
+                    } catch (error) {
+                        showUploadModalPopup('error', `上传失败: ${error.message || '网络错误'}`);
+                        uploadStatus.value = `❌ 上传失败: ${error.message || '网络错误'}`;
+                        uploadStatusClass.value = 'text-red-400';
+                    } finally {
+                        setTimeout(() => {
+                            uploadStatus.value = '';
+                            uploadStatusClass.value = 'text-gray-500';
+                        }, 5000);
+                        event.target.value = '';
+                    }
+                };
+
+                const formatMarkdown = (text) => {
+                    if (!text) return '';
+                    return text
+                        .replace(/```(\w+)?\n([\s\S]*?)```/g, '<pre><code>$2</code></pre>')
+                        .replace(/`([^`]+)`/g, '<code>$1</code>')
+                        .replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>')
+                        .replace(/\n/g, '<br>');
+                };
+
+                const getEventClass = (type) => {
+                    switch (type) {
+                        case 'tool_call': return 'bg-orange-900/30 border border-orange-500/30';
+                        case 'tool_result': return 'bg-blue-900/30 border border-blue-500/30';
+                        case 'search_result': return 'bg-green-900/30 border border-green-500/30';
+                        case 'trace': return 'bg-gray-900/30 border border-gray-500/30';
+                        default: return 'bg-gray-900/30 border border-gray-500/30';
+                    }
+                };
+
+                const getEventIcon = (type) => {
+                    switch (type) {
+                        case 'tool_call': return '🔧';
+                        case 'tool_result': return '📊';
+                        case 'search_result': return '📚';
+                        case 'trace': return 'ℹ️';
+                        default: return '📝';
+                    }
+                };
+
+                return {
+                    messages,
+                    inputMessage,
+                    isStreaming,
+                    currentSessionId,
+                    showSidebar,
+                    sessions,
+                    uploadStatus,
+                    uploadStatusClass,
+                    examples,
+                    messagesContainer,
+                    fileInput,
+                    isMobile,
+                    showUploadModal,
+                    uploadModalType,
+                    uploadModalMessage,
+                    sendMessage,
+                    sendExample,
+                    clearChat,
+                    newChat,
+                    switchSession,
+                    deleteSession,
+                    handleFileUpload,
+                    closeUploadModal,
+                    handleEnterKey,
+                    handleShiftEnter,
+                    formatMarkdown,
+                    getEventClass,
+                    getEventIcon
+                };
+            }
+        }).mount('#app');
+    </script>
+</body>
+</html>

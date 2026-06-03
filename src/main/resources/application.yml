@@ -1,0 +1,49 @@
+spring:
+  application:
+    name: OpsChat
+
+  data:
+    redis:
+      host: ${REDIS_HOST:localhost}
+      port: ${REDIS_PORT:6379}
+      timeout: 10000
+      lettuce:
+        pool:
+          max-active: 8
+          max-idle: 8
+          min-idle: 2
+
+server:
+  port: ${SERVER_PORT:8080}
+
+# OpsChat配置
+opschat:
+  ai:
+    dashscope:
+      api-key: ${DASHSCOPE_API_KEY:sk-cb4555a121af40eeae731e2b9f4ab0e9}
+      chat:
+        model: qwen-turbo
+        timeout: 120000
+        temperature: 0.7
+        max-tokens: 2048
+
+  session:
+    expire-hours: 24
+    max-window-size: 30
+    max-tokens: 8192
+    summary-threshold: 0.7
+
+  rag:
+    milvus:
+      host: ${MILVUS_HOST:localhost}
+      port: ${MILVUS_PORT:19530}
+      collection: opschat_docs
+
+  router:
+    enabled: true
+    llm-model: qwen-plus
+
+logging:
+  level:
+    com.opschat: DEBUG
+    org.springframework.web: INFO
