@@ -20,7 +20,7 @@ server:
 opschat:
   ai:
     dashscope:
-      api-key: ${DASHSCOPE_API_KEY:sk-cb4555a121af40eeae731e2b9f4ab0e9}
+      api-key: ${DASHSCOPE_API_KEY}
       chat:
         model: qwen-turbo
         timeout: 120000
