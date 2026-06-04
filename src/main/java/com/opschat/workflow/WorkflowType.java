@@ -2,19 +2,13 @@ package com.opschat.workflow;
 
 /**
  * 工作流类型枚举
- * 五分类体系：
- * - CHAT: 闲聊对话/能力咨询
- * - TOOL: 单步系统查询
- * - RAG: 知识库问答
- * - REACT: 多步骤推理分析
- * - CLARIFY: 需要澄清
+ * 统一 React Agent 驱动架构：
+ * - CHAT: 简单问题直接回答（闲聊、问候、能力咨询等）
+ * - AGENT: 复杂问题进入 React Agent（需要工具调用、多步推理）
  */
 public enum WorkflowType {
-    CHAT("闲聊对话", "直接LLM回答，处理问候、告别、能力咨询等"),
-    TOOL("单步查询", "调用工具查询，如日志、监控、订单等"),
-    RAG("知识库问答", "检索文档并总结，如SOP、架构文档"),
-    REACT("智能分析", "多步骤推理分析，如根因定位"),
-    CLARIFY("意图澄清", "信息不足，需要用户补充");
+    CHAT("直接回答", "简单问题直接由LLM回答，如问候、告别、能力咨询等"),
+    AGENT("Agent推理", "复杂问题进入React Agent进行多步推理和工具调用");
 
     /**
      * 类型名称

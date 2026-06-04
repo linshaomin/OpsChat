@@ -1,6 +1,6 @@
 package com.opschat.stream;
 
-import com.fasterxml.jackson.databind.ObjectMapper;
+import cn.hutool.json.JSONUtil;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.MediaType;
 import org.springframework.stereotype.Component;
@@ -15,12 +15,6 @@ import java.util.function.Consumer;
 public class SseResponseHandler {
 
     private static final long SSE_TIMEOUT = 5 * 60 * 1000L;
-
-    private final ObjectMapper objectMapper;
-
-    public SseResponseHandler(ObjectMapper objectMapper) {
-        this.objectMapper = objectMapper;
-    }
 
     public SseEmitter createEmitter() {
         SseEmitter emitter = new SseEmitter(SSE_TIMEOUT);
@@ -53,7 +47,7 @@ public class SseResponseHandler {
         if (content != null && !content.isEmpty()) {
             emitter.send(SseEmitter.event()
                     .name("message")
-                    .data(objectMapper.writeValueAsString(Map.of(
+                    .data(JSONUtil.toJsonStr(Map.of(
                             "type", "content",
                             "content", content,
                             "index", index
@@ -64,7 +58,7 @@ public class SseResponseHandler {
     public void sendToolCall(SseEmitter emitter, String content) throws IOException {
         emitter.send(SseEmitter.event()
                 .name("message")
-                .data(objectMapper.writeValueAsString(Map.of(
+                .data(JSONUtil.toJsonStr(Map.of(
                         "type", "tool_call",
                         "content", content
                 )), MediaType.APPLICATION_JSON));
@@ -73,7 +67,7 @@ public class SseResponseHandler {
     public void sendToolResult(SseEmitter emitter, String content) throws IOException {
         emitter.send(SseEmitter.event()
                 .name("message")
-                .data(objectMapper.writeValueAsString(Map.of(
+                .data(JSONUtil.toJsonStr(Map.of(
                         "type", "tool_result",
                         "content", content
                 )), MediaType.APPLICATION_JSON));
@@ -82,7 +76,7 @@ public class SseResponseHandler {
     public void sendSearchResult(SseEmitter emitter, String content) throws IOException {
         emitter.send(SseEmitter.event()
                 .name("message")
-                .data(objectMapper.writeValueAsString(Map.of(
+                .data(JSONUtil.toJsonStr(Map.of(
                         "type", "search_result",
                         "content", content
                 )), MediaType.APPLICATION_JSON));
@@ -91,7 +85,7 @@ public class SseResponseHandler {
     public void sendError(SseEmitter emitter, String message) throws IOException {
         emitter.send(SseEmitter.event()
                 .name("error")
-                .data(objectMapper.writeValueAsString(Map.of(
+                .data(JSONUtil.toJsonStr(Map.of(
                         "type", "error",
                         "content", message
                 )), MediaType.APPLICATION_JSON));
@@ -100,7 +94,7 @@ public class SseResponseHandler {
     public void sendDone(SseEmitter emitter) throws IOException {
         emitter.send(SseEmitter.event()
                 .name("done")
-                .data(objectMapper.writeValueAsString(Map.of(
+                .data(JSONUtil.toJsonStr(Map.of(
                         "type", "done"
                 )), MediaType.APPLICATION_JSON));
         emitter.complete();
@@ -109,7 +103,7 @@ public class SseResponseHandler {
     public void sendSessionId(SseEmitter emitter, String sessionId) throws IOException {
         emitter.send(SseEmitter.event()
                 .name("message")
-                .data(objectMapper.writeValueAsString(Map.of(
+                .data(JSONUtil.toJsonStr(Map.of(
                         "type", "sessionId",
                         "content", sessionId
                 )), MediaType.APPLICATION_JSON));

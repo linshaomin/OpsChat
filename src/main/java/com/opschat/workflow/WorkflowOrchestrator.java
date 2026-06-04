@@ -1,13 +1,9 @@
 package com.opschat.workflow;
 
-import com.opschat.router.IntentRouter;
-import com.opschat.router.RouteResult;
+import com.opschat.router.AgentGateRouter;
 import com.opschat.stream.WorkflowEvent;
-import com.opschat.stream.WorkflowEventType;
+import com.opschat.workflow.impl.AgentWorkflow;
 import com.opschat.workflow.impl.ChatWorkflow;
-import com.opschat.workflow.impl.KnowledgeWorkflow;
-import com.opschat.workflow.impl.ReactWorkflow;
-import com.opschat.workflow.impl.ToolWorkflow;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
 
@@ -18,8 +14,14 @@ import java.util.Map;
 import java.util.function.Consumer;
 
 /**
- * 工作流编排器
- * 根据路由结果选择并执行相应的工作流
+ * 工作流编排器（仅流式模式）
+ * 统一 React Agent 驱动架构的核心编排组件
+ * 
+ * 架构：
+ * - 简单问题：直接走 ChatWorkflow（LLM直接回答）
+ * - 复杂问题：进入 AgentWorkflow（React Agent多步推理）
+ * 
+ * Router 仅作为轻量 Gate，不做意图分类
  */
 @Slf4j
 @Component
@@ -31,28 +33,22 @@ public class WorkflowOrchestrator {
     private final Map<WorkflowType, WorkflowStrategy> workflowStrategyMap = new EnumMap<>(WorkflowType.class);
 
     /**
-     * 意图路由器
+     * Agent Gate 路由器（轻量门限判断）
      */
-    private final IntentRouter intentRouter;
+    private final AgentGateRouter agentGateRouter;
 
     /**
      * 构造函数
-     * @param chatWorkflow 聊天工作流
-     * @param knowledgeWorkflow 知识库工作流
-     * @param toolWorkflow 工具工作流
-     * @param reactWorkflow React工作流
-     * @param intentRouter 意图路由器
+     * @param chatWorkflow 聊天工作流（简单问题）
+     * @param agentWorkflow Agent工作流（复杂问题）
+     * @param agentGateRouter Agent门限路由器
      */
     public WorkflowOrchestrator(ChatWorkflow chatWorkflow,
-                                 KnowledgeWorkflow knowledgeWorkflow,
-                                 ToolWorkflow toolWorkflow,
-                                 ReactWorkflow reactWorkflow,
-                                 IntentRouter intentRouter) {
-        this.intentRouter = intentRouter;
+                                 AgentWorkflow agentWorkflow,
+                                 AgentGateRouter agentGateRouter) {
+        this.agentGateRouter = agentGateRouter;
         registerWorkflow(chatWorkflow);
-        registerWorkflow(knowledgeWorkflow);
-        registerWorkflow(toolWorkflow);
-        registerWorkflow(reactWorkflow);
+        registerWorkflow(agentWorkflow);
     }
 
     /**
@@ -72,44 +68,23 @@ public class WorkflowOrchestrator {
         workflowStrategyMap.put(workflow.getType(), workflow);
     }
 
-    public String execute(String question, List<Map<String, String>> history) {
-        log.info("[WorkflowOrchestrator] 执行工作流: {}", question);
-
-        RouteResult routeResult = intentRouter.route(question, history);
-
-        if (routeResult.requiresClarification()) {
-            log.info("[WorkflowOrchestrator] 意图需要澄清: {}", question);
-            return buildClarificationResponse(routeResult);
-        }
-
-        WorkflowType workflowType = routeResult.getWorkflowType();
-        log.info("[WorkflowOrchestrator] 路由结果: {} -> {}", question, workflowType);
-
-        WorkflowStrategy strategy = workflowStrategyMap.get(workflowType);
-        if (strategy == null) {
-            log.error("[WorkflowOrchestrator] 未找到工作流策略: {}", workflowType);
-            return "抱歉，处理您的请求时出现错误。";
-        }
-
-        return strategy.execute(question, history);
-    }
-
+    /**
+     * 流式执行工作流
+     * @param question 用户问题
+     * @param history 历史对话记录
+     * @param eventConsumer 事件消费者
+     */
     public void executeStream(String question, List<Map<String, String>> history, Consumer<WorkflowEvent> eventConsumer) {
-        // 执行意图路由
-        RouteResult routeResult = intentRouter.route(question, history);
+        log.info("[WorkflowOrchestrator] 执行流式工作流: {}", question);
 
-        // 需要澄清
-        if (routeResult.requiresClarification()) {
-            eventConsumer.accept(WorkflowEvent.content(buildClarificationResponse(routeResult)));
-            eventConsumer.accept(WorkflowEvent.done());
-            return;
-        }
+        // 使用轻量 Gate 判断是否进入 Agent
+        AgentGateRouter.GateResult gateResult = agentGateRouter.shouldUseAgent(question);
+        log.info("[WorkflowOrchestrator] Gate 判断结果: useAgent={}, confidence={}, reason={}",
+                gateResult.isUseAgent(), gateResult.getConfidence(), gateResult.getReason());
 
-        // 获取工作流类型
-        WorkflowType workflowType = routeResult.getWorkflowType();
-        log.info("[WorkflowOrchestrator] 路由结果: {} -> {}", question, workflowType);
+        // 根据 Gate 判断结果选择工作流
+        WorkflowType workflowType = gateResult.isUseAgent() ? WorkflowType.AGENT : WorkflowType.CHAT;
 
-        // 获取并执行工作流
         WorkflowStrategy strategy = workflowStrategyMap.get(workflowType);
         if (strategy == null) {
             log.error("[WorkflowOrchestrator] 未找到工作流策略: {}", workflowType);
@@ -117,27 +92,24 @@ public class WorkflowOrchestrator {
             return;
         }
 
-        // 执行工作流
-        strategy.executeStream(question, history, eventConsumer);
-    }
-
-    /**
-     * 构建澄清响应
-     * @param routeResult 路由结果
-     * @return 澄清消息
-     */
-    private String buildClarificationResponse(RouteResult routeResult) {
-        StringBuilder sb = new StringBuilder();
-        sb.append(routeResult.getClarifyQuestion());
-        
-        // 添加缺失信息列表
-        if (routeResult.getMissingInfo() != null && !routeResult.getMissingInfo().isEmpty()) {
-            sb.append("\n\n请补充以下信息：");
-            for (String info : routeResult.getMissingInfo()) {
-                sb.append("\n• ").append(info);
+        try {
+            strategy.executeStream(question, history, eventConsumer);
+        } catch (Exception e) {
+            log.error("[WorkflowOrchestrator] 工作流执行失败: {}", workflowType, e);
+            // Agent失败时 fallback 到 Chat
+            if (workflowType == WorkflowType.AGENT) {
+                log.warn("[WorkflowOrchestrator] Agent 失败，fallback 到 Chat");
+                WorkflowStrategy chatStrategy = workflowStrategyMap.get(WorkflowType.CHAT);
+                if (chatStrategy != null) {
+                    try {
+                        chatStrategy.executeStream(question, history, eventConsumer);
+                        return;
+                    } catch (Exception ex) {
+                        log.error("[WorkflowOrchestrator] Chat fallback 也失败", ex);
+                    }
+                }
             }
+            eventConsumer.accept(WorkflowEvent.error("处理失败: " + e.getMessage()));
         }
-        
-        return sb.toString();
     }
 }

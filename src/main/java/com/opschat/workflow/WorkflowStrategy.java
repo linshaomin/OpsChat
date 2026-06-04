@@ -8,7 +8,7 @@ import java.util.function.Consumer;
 
 /**
  * 工作流策略接口
- * 定义工作流执行的标准方法
+ * 定义工作流执行的标准方法（仅流式）
  */
 public interface WorkflowStrategy {
 
@@ -17,14 +17,6 @@ public interface WorkflowStrategy {
      * @return 工作流类型
      */
     WorkflowType getType();
-
-    /**
-     * 同步执行工作流
-     * @param question 用户问题
-     * @param history 历史对话记录
-     * @return 执行结果
-     */
-    String execute(String question, List<Map<String, String>> history);
 
     /**
      * 流式执行工作流

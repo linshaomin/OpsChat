@@ -51,19 +51,6 @@ public class ChatWorkflow implements WorkflowStrategy {
     }
 
     /**
-     * 同步执行聊天工作流
-     * @param question 用户问题
-     * @param history 历史对话记录
-     * @return 回答内容
-     */
-    @Override
-    public String execute(String question, List<Map<String, String>> history) {
-        log.info("[ChatWorkflow] 执行聊天工作流");
-        List<Message> messages = promptTemplate.buildChatPrompt(history, question);
-        return llmService.chat(messages);
-    }
-
-    /**
      * 流式执行聊天工作流
      * @param question 用户问题
      * @param history 历史对话记录

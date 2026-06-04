@@ -228,8 +228,8 @@
                         </div>
                     </div>
 
-                    <!-- Typing Indicator (only show after assistant messages) -->
-                    <div v-if="isStreaming && index === messages.length - 1 && msg.role === 'assistant'" class="flex gap-4 py-3">
+                    <!-- Typing Indicator (only show when streaming and last message is assistant) -->
+                    <div v-if="isStreaming && index === messages.length - 1 && msg.role === 'assistant' && !msg.content" class="flex gap-4 py-3">
                         <div v-if="messages.length === 1 || messages[index - 1].role !== 'assistant'" class="w-10 h-10 rounded-full bg-[var(--primary-color)] flex items-center justify-center text-sm flex-shrink-0">🤖</div>
                         <div v-else class="w-10 flex-shrink-0"></div>
                         <div class="bg-[var(--bg-message)] rounded-2xl px-4 py-3 rounded-t-none">
@@ -561,6 +561,7 @@
                             break;
                         
                         case 'done':
+                            isStreaming.value = false;
                             break;
                     }
 
@@ -572,7 +573,18 @@
                     sendMessage();
                 };
 
-                const clearChat = () => {
+                const clearChat = async () => {
+                    if (!confirm('确定要清空当前对话吗？')) return;
+                    
+                    if (currentSessionId.value) {
+                        try {
+                            await fetch(`/api/v1/sessions/${currentSessionId.value}/messages`, {
+                                method: 'DELETE'
+                            });
+                        } catch (error) {
+                            console.error('清空会话失败:', error);
+                        }
+                    }
                     messages.value = [];
                     currentSessionId.value = null;
                 };
@@ -657,6 +669,8 @@
                                 currentSessionId.value = null;
                                 messages.value = [];
                             }
+                            // 刷新会话列表
+                            await loadSessions();
                         }
                     } catch (error) {
                         console.error('删除会话失败:', error);

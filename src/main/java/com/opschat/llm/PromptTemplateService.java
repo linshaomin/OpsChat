@@ -33,7 +33,7 @@ public class PromptTemplateService {
      */
     public List<Message> buildChatPrompt(List<Map<String, String>> history, String question) {
         List<Message> messages = new ArrayList<>();
-        
+
         // 添加系统提示词
         messages.add(Message.builder()
                 .role(Role.SYSTEM.getValue())
@@ -42,7 +42,7 @@ public class PromptTemplateService {
 
         // 添加历史消息
         messages.addAll(buildHistoryMessages(history));
-        
+
         // 添加当前问题
         messages.add(Message.builder()
                 .role(Role.USER.getValue())
@@ -96,57 +96,6 @@ public class PromptTemplateService {
     }
 
     /**
-     * 构建工具调用提示词
-     * @param history 历史对话记录
-     * @param question 用户问题
-     * @param toolResult 工具执行结果
-     * @return 消息列表
-     */
-    public List<Message> buildToolPrompt(List<Map<String, String>> history, String question, String toolResult) {
-        String content = String.format(
-                "【用户问题】\n%s\n\n【查询结果】\n%s\n\n请根据查询结果回答用户问题。",
-                question, toolResult);
-
-        List<Message> messages = new ArrayList<>();
-        messages.add(Message.builder()
-                .role(Role.SYSTEM.getValue())
-                .content("你是一个专业的智能运维助手，擅长分析系统查询结果。")
-                .build());
-        messages.addAll(buildHistoryMessages(history));
-        messages.add(Message.builder()
-                .role(Role.USER.getValue())
-                .content(content)
-                .build());
-
-        return messages;
-    }
-
-    /**
-     * 构建React推理提示词
-     * @param history 历史对话记录
-     * @param question 用户问题
-     * @return 消息列表
-     */
-    public List<Message> buildReactPrompt(List<Map<String, String>> history, String question) {
-        String content = String.format(
-                "【用户问题】\n%s\n\n请进行多步骤推理分析，逐步排查问题根因。",
-                question);
-
-        List<Message> messages = new ArrayList<>();
-        messages.add(Message.builder()
-                .role(Role.SYSTEM.getValue())
-                .content("你是一个专业的智能运维助手，擅长多步骤推理和根因分析。请逐步分析问题，给出清晰的推理过程和结论。")
-                .build());
-        messages.addAll(buildHistoryMessages(history));
-        messages.add(Message.builder()
-                .role(Role.USER.getValue())
-                .content(content)
-                .build());
-
-        return messages;
-    }
-
-    /**
      * 构建历史消息列表
      * @param history 历史记录
      * @return 消息列表
@@ -169,18 +118,25 @@ public class PromptTemplateService {
     }
 
     /**
-     * 获取默认聊天模型
-     * @return 模型名称
+     * 构建React Agent系统提示词
+     * @param history 对话历史
+     * @return 系统提示词
      */
-    public String getDefaultChatModel() {
-        return MODEL_CHAT;
-    }
+    public String buildReactAgentPrompt(List<Map<String, String>> history) {
+        StringBuilder sb = new StringBuilder();
 
-    /**
-     * 获取默认推理模型
-     * @return 模型名称
-     */
-    public String getDefaultReactModel() {
-        return MODEL_REACT;
+        sb.append("你是一个智能运维助手。\n");
+
+        sb.append("可用工具：\n");
+        sb.append("- getCurrentTime: 获取当前时间\n");
+        sb.append("- searchKnowledgeBase: 检索知识库文档\n");
+        sb.append("- queryMetrics: 查询系统监控指标\n");
+        sb.append("- queryLogs: 查询腾讯云日志\n\n");
+
+        sb.append("注意：\n");
+        sb.append("- 如果不需要工具可以直接回答\n");
+        sb.append("- 回答问题时请使用中文\n");
+
+        return sb.toString();
     }
 }

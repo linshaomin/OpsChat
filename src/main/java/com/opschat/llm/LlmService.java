@@ -102,7 +102,7 @@ public class LlmService {
             GenerationParam param = GenerationParam.builder()
                     .apiKey(dashScopeProperties.getApiKey())
                     .model(model)
-                    .incrementalOutput(true)
+                    .incrementalOutput(false)  // 使用非增量输出，避免重复内容
                     .resultFormat("message")
                     .messages(messages)
                     .build();

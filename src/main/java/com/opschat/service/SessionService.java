@@ -1,10 +1,9 @@
 package com.opschat.service;
 
 import com.fasterxml.jackson.annotation.JsonIgnore;
+import com.opschat.config.SessionProperties;
 import lombok.Data;
 import lombok.extern.slf4j.Slf4j;
-import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.beans.factory.annotation.Value;
 import org.springframework.data.redis.core.RedisTemplate;
 import org.springframework.stereotype.Service;
 
@@ -18,30 +17,32 @@ import java.util.stream.Collectors;
 
 /**
  * 会话服务类
+ * 管理会话生命周期、消息历史和摘要压缩
  */
 @Slf4j
 @Service
 public class SessionService {
 
-    @Autowired
-    private RedisTemplate<String, Object> redisTemplate;
-
     private static final String SESSION_PREFIX = "chat:session:";
 
-    @Value("${session.expire-hours:24}")
-    private long sessionExpireHours;
+    private final RedisTemplate<String, Object> redisTemplate;
+    private final SessionProperties sessionProperties;
 
-    @Value("${session.max-window-size:30}")
-    private int maxWindowSize;
-
-    @Value("${session.max-tokens:8192}")
-    private int maxTokens;
-
-    @Value("${session.summary-threshold:0.7}")
-    private double summaryThreshold;
+    /**
+     * 构造函数注入
+     * @param redisTemplate Redis模板
+     * @param sessionProperties 会话配置
+     */
+    public SessionService(RedisTemplate<String, Object> redisTemplate,
+                         SessionProperties sessionProperties) {
+        this.redisTemplate = redisTemplate;
+        this.sessionProperties = sessionProperties;
+    }
 
     /**
      * 获取或创建会话
+     * @param sessionId 会话ID，为空时自动生成
+     * @return 会话信息
      */
     public SessionInfo getOrCreateSession(String sessionId) {
         if (sessionId == null || sessionId.isEmpty()) {
@@ -50,7 +51,7 @@ public class SessionService {
         String key = getSessionKey(sessionId);
         Object obj = redisTemplate.opsForValue().get(key);
         if (obj != null) {
-            redisTemplate.expire(key, sessionExpireHours, TimeUnit.HOURS);
+            refreshSessionExpire(key);
             return (SessionInfo) obj;
         }
         SessionInfo session = new SessionInfo(sessionId);
@@ -60,24 +61,27 @@ public class SessionService {
 
     /**
      * 保存会话
+     * @param session 会话信息
      */
     public void saveSession(SessionInfo session) {
         redisTemplate.opsForValue().set(
             getSessionKey(session.getSessionId()),
             session,
-            sessionExpireHours, TimeUnit.HOURS
+            sessionProperties.getExpireHours(), TimeUnit.HOURS
         );
     }
 
     /**
      * 获取会话
+     * @param sessionId 会话ID
+     * @return 会话信息，不存在返回null
      */
     public SessionInfo getSession(String sessionId) {
         if (sessionId == null || sessionId.isEmpty()) return null;
         String key = getSessionKey(sessionId);
         Object obj = redisTemplate.opsForValue().get(key);
         if (obj != null) {
-            redisTemplate.expire(key, sessionExpireHours, TimeUnit.HOURS);
+            refreshSessionExpire(key);
             return (SessionInfo) obj;
         }
         return null;
@@ -85,6 +89,8 @@ public class SessionService {
 
     /**
      * 删除会话
+     * @param sessionId 会话ID
+     * @return 删除是否成功
      */
     public boolean deleteSession(String sessionId) {
         return Boolean.TRUE.equals(redisTemplate.delete(getSessionKey(sessionId)));
@@ -92,6 +98,7 @@ public class SessionService {
 
     /**
      * 获取所有会话ID
+     * @return 会话ID列表
      */
     public List<String> getAllSessionIds() {
         Set<String> keys = redisTemplate.keys(SESSION_PREFIX + "*");
@@ -100,7 +107,8 @@ public class SessionService {
     }
 
     /**
-     * 获取所有会话信息
+     * 获取所有会话信息（按创建时间倒序）
+     * @return 会话信息列表
      */
     public List<SessionInfo> getAllSessions() {
         List<String> sessionIds = getAllSessionIds();
@@ -119,6 +127,8 @@ public class SessionService {
 
     /**
      * 获取历史消息列表
+     * @param sessionId 会话ID
+     * @return 消息历史列表
      */
     public List<Map<String, String>> getHistoryMessages(String sessionId) {
         SessionInfo session = getOrCreateSession(sessionId);
@@ -127,6 +137,9 @@ public class SessionService {
 
     /**
      * 添加消息到会话（包含窗口管理和摘要逻辑）
+     * @param session 会话信息
+     * @param userQuestion 用户问题
+     * @param aiAnswer AI回答
      */
     public void addMessage(SessionInfo session, String userQuestion, String aiAnswer) {
         List<Map<String, String>> messageHistory = session.getMessageHistory();
@@ -146,28 +159,54 @@ public class SessionService {
         messageHistory.add(assistantMsg);
 
         // 窗口大小限制
-        int maxMessages = maxWindowSize * 2;
-        while (messageHistory.size() > maxMessages) {
-            messageHistory.remove(0);
-            if (!messageHistory.isEmpty()) messageHistory.remove(0);
-        }
+        maintainWindowSize(messageHistory);
 
         // 摘要触发检查
         int currentTokens = calculateTokens(messageHistory);
-        double ratio = (double) currentTokens / maxTokens;
+        double ratio = (double) currentTokens / sessionProperties.getMaxTokens();
         
-        if (ratio >= summaryThreshold && messageHistory.size() > 4) {
-            log.info("触发历史摘要，当前 token: {}, 阈值: {}", currentTokens, maxTokens * summaryThreshold);
+        if (ratio >= sessionProperties.getSummaryThreshold() && messageHistory.size() > 4) {
+            log.info("触发历史摘要，当前 token: {}, 阈值: {}", currentTokens, 
+                    sessionProperties.getMaxTokens() * sessionProperties.getSummaryThreshold());
             List<Map<String, String>> summarized = summarizeHistory(messageHistory);
             session.setMessageHistory(summarized);
             messageHistory = summarized;
         }
 
-        // Token 大小限制
-        currentTokens = calculateTokens(messageHistory);
-        while (currentTokens > maxTokens && messageHistory.size() > 2) {
+        // Token 大小限制（二次检查）
+        enforceTokenLimit(messageHistory);
+    }
+
+    /**
+     * 刷新会话过期时间
+     */
+    private void refreshSessionExpire(String key) {
+        redisTemplate.expire(key, sessionProperties.getExpireHours(), TimeUnit.HOURS);
+    }
+
+    /**
+     * 维护窗口大小
+     */
+    private void maintainWindowSize(List<Map<String, String>> messageHistory) {
+        int maxMessages = sessionProperties.getMaxWindowSize() * 2;
+        while (messageHistory.size() > maxMessages) {
             messageHistory.remove(0);
-            if (!messageHistory.isEmpty()) messageHistory.remove(0);
+            if (!messageHistory.isEmpty()) {
+                messageHistory.remove(0);
+            }
+        }
+    }
+
+    /**
+     * 强制执行Token限制
+     */
+    private void enforceTokenLimit(List<Map<String, String>> messageHistory) {
+        int currentTokens = calculateTokens(messageHistory);
+        while (currentTokens > sessionProperties.getMaxTokens() && messageHistory.size() > 2) {
+            messageHistory.remove(0);
+            if (!messageHistory.isEmpty()) {
+                messageHistory.remove(0);
+            }
             currentTokens = calculateTokens(messageHistory);
         }
     }
@@ -176,6 +215,9 @@ public class SessionService {
         return SESSION_PREFIX + sessionId;
     }
 
+    /**
+     * 计算Token数量（简化估算）
+     */
     private int calculateTokens(List<Map<String, String>> messages) {
         if (messages == null || messages.isEmpty()) return 0;
         
@@ -191,6 +233,9 @@ public class SessionService {
         return total;
     }
 
+    /**
+     * 历史摘要（保留最新消息，压缩历史）
+     */
     private List<Map<String, String>> summarizeHistory(List<Map<String, String>> messages) {
         if (messages == null || messages.size() <= 4) {
             return messages;
@@ -226,6 +271,9 @@ public class SessionService {
         }
     }
 
+    /**
+     * 会话信息 DTO
+     */
     @Data
     public static class SessionInfo {
         private String sessionId;
@@ -244,7 +292,9 @@ public class SessionService {
         }
 
         public void clearHistory() {
-            if (messageHistory != null) messageHistory.clear();
+            if (messageHistory != null) {
+                messageHistory.clear();
+            }
         }
 
         @JsonIgnore

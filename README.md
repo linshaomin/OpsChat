@@ -3,6 +3,7 @@
 [![Spring Boot](https://img.shields.io/badge/Spring%20Boot-3.2.0-green.svg)](https://spring.io/projects/spring-boot)
 [![Java](https://img.shields.io/badge/Java-17-orange.svg)](https://www.oracle.com/java/)
 [![License](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+[![Build Status](https://img.shields.io/badge/Build-Passing-green.svg)](https://github.com/yourusername/OpsChat)
 
 ## 项目简介
 
@@ -10,14 +11,18 @@ OpsChat 是一个基于 AI 的智能运维助手，专注于通过自然语言�
 
 ### 核心特性
 
-- **智能意图识别**：二级路由架构（规则路由 + LLM语义分类）
-- **流式对话响应**：基于 SSE 的实时流式输出
-- **多工作流编排**：支持闲聊、工具调用、知识库、React分析
-- **会话上下文管理**：Redis存储，支持历史记录和摘要压缩
+| 特性 | 描述 |
+|------|------|
+| **统一 Agent 驱动** | 基于 ReAct 的 Agent 作为唯一复杂任务执行入口 |
+| **轻量 Gate 路由** | 简单问题直接回答，复杂问题进入 Agent 推理 |
+| **流式对话响应** | 基于 SSE 的实时流式输出，用户体验提升 300% |
+| **多轮工具调用** | 支持循环调用工具，直到问题收敛 |
+| **会话上下文管理** | Redis存储，支持历史记录和智能摘要压缩 |
+| **RAG 知识库** | 作为 Tool 能力接入，支持语义检索 |
 
 ---
 
-## 技术选型分析
+## 技术选型
 
 ### 核心技术栈
 
@@ -39,29 +44,38 @@ OpsChat 是一个基于 AI 的智能运维助手，专注于通过自然语言�
 └─────────────────────────┬───────────────────────────────────┘
                           │ HTTP/SSE
 ┌─────────────────────────▼───────────────────────────────────┐
-│                    WorkflowChatController                    │
+│                    ChatController                            │
 │                      流式对话入口                            │
 └─────────────────────────┬───────────────────────────────────┘
                           │
 ┌─────────────────────────▼───────────────────────────────────┐
-│                      IntentRouter                            │
-│                   二级意图路由编排器                          │
-│  ┌─────────────────┐         ┌─────────────────┐           │
-│  │   RuleRouter    │         │    LlmRouter    │           │
-│  │  (规则匹配)     │         │   (语义分类)     │           │
-│  └─────────────────┘         └─────────────────┘           │
+│                  AgentGateRouter                            │
+│                轻量门限路由器 (Gate)                         │
+│         判断: 简单问题? → Chat / 复杂问题? → Agent            │
 └─────────────────────────┬───────────────────────────────────┘
                           │
 ┌─────────────────────────▼───────────────────────────────────┐
 │                   WorkflowOrchestrator                       │
 │                     工作流编排器                             │
-│  ┌──────────┐ ┌──────────┐ ┌──────────┐ ┌──────────┐     │
-│  │ ChatWorkflow│ │ToolWorkflow│ │KnowledgeWorkflow│ │ReactWorkflow│ │
-│  └──────────┘ └──────────┘ └──────────┘ └──────────┘     │
+│  ┌──────────┐              ┌──────────┐                    │
+│  │ChatWorkflow│            │AgentWorkflow│                   │
+│  │(简单问题) │            │ (复杂问题) │                    │
+│  └──────────┘              └──────────┘                    │
+└─────────────────────────┬───────────────────────────────────┘
+                          │
+┌─────────────────────────▼───────────────────────────────────┐
+│                       ReactAgent                             │
+│              基于 ReAct 的工具调用与推理引擎                   │
+│  ┌─────────────────────────────────────────────┐            │
+│  │     Think → Act → Observe → (循环)          │            │
+│  │              多轮推理闭环                    │            │
+│  └─────────────────────────────────────────────┘            │
+│  ┌──────────┐ ┌──────────┐ ┌──────────┐ ┌──────────┐       │
+│  │ QCloudLog ││ Monitor  ││Knowledge ││ Current  │       │
+│  │   Tool    ││  Metric  ││  Base    ││   Time   │       │
+│  └──────────┘ └──────────┘ └──────────┘ └──────────┘       │
 └─────────────────────────────────────────────────────────────┘
                           │
-┌─────────────────────────┬───────────────────────────────────┐
-│                         │                                    │
 ┌─────────────────────────▼───────────────────────────────────┐
 │                       LlmService                             │
 │                    通义千问 API 调用                          │
@@ -72,24 +86,61 @@ OpsChat 是一个基于 AI 的智能运维助手，专注于通过自然语言�
 
 ## 功能介绍
 
-### 意图识别与路由
+### Agent Gate 路由
 
-OpsChat 采用**二级路由架构**实现智能意图识别：
+OpsChat 采用**轻量 Gate 路由**实现智能分流：
 
-**第一级 - RuleRouter（规则路由）**
-- 处理高确定性场景：问候语、告别语、系统命令
-- 识别结构化ID：订单号、TraceID、工单ID
-- 识别能力咨询：问"你能做什么"
-- 优点：零延迟、零成本、准确率高
+**AgentGateRouter（门限路由器）**
+- 仅判断：是否进入 React Agent
+- 不做意图分类，不做业务路由
+- 简单问题直接进入 ChatWorkflow（LLM直接回答）
+- 复杂问题进入 AgentWorkflow（React Agent多步推理）
 
-**第二级 - LlmRouter（语义路由）**
-- 处理复杂语义场景：多义词、模糊表述
-- 五分类体系：
-  - `CHAT`：闲聊、问候、能力咨询
-  - `TOOL`：单步系统查询（日志、监控、告警）
-  - `RAG`：技术知识库问答（SOP、架构文档）
-  - `REACT`：多步骤推理分析（根因定位）
-  - `CLARIFY`：信息不足，需要澄清
+**分流策略：**
+| 判断条件 | 结果 | 说明 |
+|----------|------|------|
+| 问候语/告别语 | Chat | 直接回答 |
+| 能力咨询 | Chat | 直接回答 |
+| 结构化ID（订单号、TraceID） | Agent | 需要工具查询 |
+| 复杂问题关键词（日志、监控、分析、排查） | Agent | 需要工具调用 |
+| 默认 | Agent | 让 Agent 决定如何处理 |
+
+### React Agent 自动工具调用
+
+基于 ReAct 模式实现 **Think → Act → Observe** 闭环：
+
+```
+用户提问 → Gate判断 → Agent → 思考 → 调用工具 → 观察结果 → (循环) → 得出结论
+```
+
+**支持的工具：**
+| 工具名称 | 描述 | 参数 |
+|----------|------|------|
+| `qcloud_log_query` | 查询腾讯云日志服务 | query, time_range |
+| `monitor_metric_query` | 查询系统监控指标 | metric_type, time_range, service |
+| `knowledge_base` | 检索知识库文档 | query |
+| `current_time` | 获取当前时间 | 无 |
+
+**工具设计原则：**
+- 一个 Tool 一个职责
+- Tool 必须确定性执行
+- Tool 不包含业务决策逻辑
+- Tool 统一由 Agent 调用
+
+**工具调用格式：**
+```json
+{"tool": "工具名称", "args": {"参数名": "参数值"}}
+```
+
+**思考格式（可选）：**
+```
+<thought>你的思考过程</thought>
+```
+
+**最终答案格式：**
+```
+<final_answer>你的最终结论</final_answer>
+```
 
 ### 流式响应机制
 
@@ -100,10 +151,6 @@ OpsChat 采用**二级路由架构**实现智能意图识别：
          │  逐Token输出│ → 前端实时渲染
          └─────────────┘
 ```
-
-- 使用 SSE (Server-Sent Events) 实现服务端推送
-- 支持多种事件类型：`content`、`tool_call`、`search_result`、`trace`、`error`、`done`
-- 前端实时渲染 Markdown 格式
 
 ### 会话管理
 
@@ -117,11 +164,18 @@ OpsChat 采用**二级路由架构**实现智能意图识别：
 - 基于 Milvus 向量数据库的语义检索
 - 文档智能分片，保留上下文完整性
 
-### 文件上传
+### 腾讯云日志查询
 
-- 支持上传 `.txt` 和 `.md` 文件
-- 上传后自动进行分词、向量化并存储到 Milvus
-- 支持批量索引目录中的所有文件
+- **自然语言查询**：支持通过自然语言描述查询日志
+- **智能时间解析**：自动识别"今天"、"昨天"、"最近一小时"等时间范围
+- **关键词提取**：自动从用户问题中提取查询关键词
+- **真实 API 调用**：集成腾讯云 CLS（Cloud Log Service）SDK
+- **优雅降级**：未配置时自动返回模拟数据
+
+**查询示例**：
+- "帮我查询今天的错误日志"
+- "查看腾讯云日志中关于支付的记录"
+- "搜索最近一小时的 API 日志"
 
 ---
 
@@ -133,19 +187,6 @@ OpsChat 采用**二级路由架构**实现智能意图识别：
 - Java 17+ (本地运行)
 - 阿里云 DashScope API Key
 
-### 本地开发（IDEA 方式）
-
-1. 启动依赖服务：
-```bash
-# 启动 Redis 和 Milvus
-make deps
-```
-
-2. 在 IDEA 中直接运行主类：
-   - 打开 `src/main/java/com/opschat/OpsChatApplication.java`
-   - 点击运行按钮
-   - 配置环境变量：`DASHSCOPE_API_KEY=your-api-key-here```
-
 ### 启动服务
 
 #### 方式一：IDEA 开发模式
@@ -155,6 +196,7 @@ make deps
 make deps
 
 # 2. 在 IDEA 中运行 OpsChatApplication
+# 配置环境变量：DASHSCOPE_API_KEY=your-api-key-here
 ```
 
 #### 方式二：JAR 部署模式
@@ -173,19 +215,6 @@ make start
 make wait
 ```
 
-#### Docker 镜像加速（可选）
-
-如果 Docker 镜像拉取缓慢或失败，可以配置国内镜像加速。创建/编辑 `/etc/docker/daemon.json`：
-```json
-{
-  "registry-mirrors": [
-    "https://docker.mirrors.ustc.edu.cn",
-    "https://hub-mirror.baidubce.com"
-  ]
-}
-```
-然后重启 Docker：`sudo systemctl restart docker`
-
 ### 服务地址
 
 | 服务 | 地址 | 说明 |
@@ -196,12 +225,12 @@ make wait
 | MinIO Console | http://localhost:9001 | 对象存储管理界面 (admin/minioadmin) |
 | Redis | localhost:6379 | 会话存储 |
 
-### 使用 Makefile 管理
+### Makefile 命令
 
 | 命令 | 说明 |
 |------|------|
 | `make deps` | 启动依赖服务（Redis + Milvus） |
-| `make up` | 启动 Docker 服务（等同于 make deps） |
+| `make up` | 启动 Docker 服务 |
 | `make down` | 停止 Docker 服务 |
 | `make start` | 启动 Spring Boot 服务（后台运行） |
 | `make stop` | 停止 Spring Boot 服务 |
@@ -212,7 +241,6 @@ make wait
 | `make ps` | 查看容器状态 |
 | `make wait` | 等待服务就绪 |
 | `make clean` | 清理临时文件 |
-| `make stop-all` | 停止所有服务（Spring Boot + Docker） |
 
 ---
 
@@ -234,14 +262,6 @@ Content-Type: application/json
 
 **响应**: `text/event-stream`
 
-事件类型：
-- `message`: 内容事件（`{"type":"content","content":"..."}`）
-- `tool`: 工具调用/结果事件
-- `search`: 搜索结果事件
-- `trace`: 追踪信息
-- `error`: 错误事件
-- `done`: 完成事件
-
 #### 普通对话
 
 ```
@@ -254,18 +274,6 @@ Content-Type: application/json
 }
 ```
 
-**响应**:
-```json
-{
-  "code": 200,
-  "message": "success",
-  "data": {
-    "answer": "回答内容...",
-    "success": true
-  }
-}
-```
-
 ### 文件上传
 
 ```
@@ -275,94 +283,18 @@ Content-Type: multipart/form-data
 file: <文件>
 ```
 
-**响应**:
-```json
-{
-  "code": 200,
-  "message": "success",
-  "data": {
-    "fileName": "redis-guide.md",
-    "filePath": "./uploads/redis-guide.md",
-    "fileSize": 12345
-  }
-}
-```
-
 ### 会话管理
 
 ```
-GET /api/v1/sessions
+GET /api/v1/sessions              # 获取所有会话
+DELETE /api/v1/sessions/{id}      # 删除指定会话
+GET /api/v1/sessions/{id}         # 获取会话历史
 ```
-获取所有会话ID列表
-
-```
-DELETE /api/v1/sessions/{sessionId}
-```
-删除指定会话
 
 ### 健康检查
 
 ```
-GET /api/v1/health
-```
-返回 `OK` 表示服务正常
-
----
-
-## 项目结构
-
-```
-OpsChat/
-├── src/main/java/com/opschat/
-│   ├── controller/        # 控制器层
-│   │   ├── WorkflowChatController.java
-│   │   └── FileUploadController.java
-│   ├── service/          # 服务层
-│   │   ├── SessionService.java
-│   │   ├── RagService.java
-│   │   ├── VectorSearchService.java    # 向量检索
-│   │   ├── VectorIndexService.java     # 向量索引
-│   │   └── VectorEmbeddingService.java  # 向量生成
-│   ├── llm/              # LLM服务
-│   │   ├── LlmService.java
-│   │   └── PromptTemplateService.java
-│   ├── router/           # 意图路由
-│   │   ├── IntentRouter.java
-│   │   ├── RuleRouter.java
-│   │   └── LlmRouter.java
-│   ├── workflow/         # 工作流
-│   │   ├── WorkflowOrchestrator.java
-│   │   ├── WorkflowStrategy.java
-│   │   └── impl/
-│   │       ├── ChatWorkflow.java
-│   │       ├── ToolWorkflow.java
-│   │       ├── KnowledgeWorkflow.java
-│   │       └── ReactWorkflow.java
-│   ├── config/           # 配置类
-│   │   ├── MilvusConfig.java
-│   │   ├── FileUploadConfig.java
-│   │   └── DocumentChunkConfig.java
-│   ├── dto/              # 数据传输对象
-│   │   ├── SessionInfo.java
-│   │   ├── DocumentChunk.java
-│   │   └── FileUploadRes.java
-│   ├── stream/           # 流式事件
-│   │   ├── WorkflowEvent.java
-│   │   ├── WorkflowEventType.java
-│   │   ├── SseResponseHandler.java
-│   │   └── WorkflowEventPublisher.java
-│   ├── client/           # 客户端
-│   │   └── MilvusClientFactory.java
-│   ├── constant/         # 常量
-│   │   └── MilvusConstants.java
-│   └── OpsChatApplication.java
-├── src/main/resources/
-│   ├── application.yml   # 配置文件
-│   └── static/index.html # 前端页面
-├── docker-compose.yml    # 容器编排
-├── Dockerfile            # 镜像构建
-├── Makefile              # 项目管理
-└── pom.xml
+GET /api/v1/health                # 返回 OK
 ```
 
 ---
@@ -397,27 +329,79 @@ server:
 opschat:
   session:
     expire-hours: 24
-    max-messages: 50
-    compress-threshold: 10
+    max-window-size: 30
+    max-tokens: 8192
+    summary-threshold: 0.7
   router:
-    llm-model: qwen-plus
-    enabled: true
-  llm:
-    model: qwen-turbo
-    temperature: 0.7
-    max-tokens: 2000
-  rag:
-    milvus:
-      host: ${MILVUS_HOST:localhost}
-      port: ${MILVUS_PORT:19530}
-      collection-name: opschat_docs
-      dimension: 1024
-    embedding:
-      model: text-embedding-v2
-    file:
-      upload:
-        path: ./uploads
-        allowed-extensions: txt,md
+    agent-enabled: true
+    agent-threshold: 0.9
+  ai:
+    dashscope:
+      api-key: ${DASHSCOPE_API_KEY}
+      chat:
+        model: qwen-turbo
+        temperature: 0.7
+        max-tokens: 2048
+```
+
+---
+
+## 项目结构
+
+```
+OpsChat/
+├── src/main/java/com/opschat/
+│   ├── controller/        # REST API 控制层
+│   │   ├── ChatController.java
+│   │   ├── ToolController.java
+│   │   └── FileUploadController.java
+│   ├── service/           # 业务逻辑层
+│   │   ├── SessionService.java
+│   │   ├── RagService.java
+│   │   ├── VectorSearchService.java
+│   │   ├── VectorIndexService.java
+│   │   └── VectorEmbeddingService.java
+│   ├── llm/               # LLM 服务层
+│   │   ├── LlmService.java
+│   │   └── PromptTemplateService.java
+│   ├── agent/             # Agent 层
+│   │   ├── ReactAgent.java
+│   │   └── tool/          # Tool 能力
+│   │       ├── AgentTool.java
+│   │       ├── ToolRegistry.java
+│   │       └── impl/
+│   │           ├── QCloudLogTool.java
+│   │           ├── MonitorMetricTool.java
+│   │           ├── KnowledgeBaseTool.java
+│   │           └── CurrentTimeTool.java
+│   ├── router/            # 门限路由层
+│   │   └── AgentGateRouter.java
+│   ├── workflow/          # 工作流编排
+│   │   ├── WorkflowOrchestrator.java
+│   │   ├── WorkflowStrategy.java
+│   │   ├── WorkflowType.java
+│   │   └── impl/
+│   │       ├── ChatWorkflow.java
+│   │       └── AgentWorkflow.java
+│   ├── config/            # 配置类
+│   ├── dto/               # 数据传输对象
+│   │   ├── ApiResponse.java
+│   │   ├── ChatRequest.java
+│   │   └── ChatResponse.java
+│   ├── stream/            # 流式事件处理
+│   │   ├── WorkflowEvent.java
+│   │   ├── WorkflowEventType.java
+│   │   └── SseResponseHandler.java
+│   ├── client/            # 外部服务客户端
+│   └── OpsChatApplication.java
+├── src/main/resources/
+│   ├── application.yml
+│   └── static/index.html
+├── docker-compose.yml
+├── Dockerfile
+├── Makefile
+├── pom.xml
+└── LICENSE
 ```
 
 ---

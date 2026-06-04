@@ -2,6 +2,12 @@ spring:
   application:
     name: OpsChat
 
+  ai:
+    dashscope:
+      api-key: ${DASHSCOPE_API_KEY}
+      agent:
+        api-key: ${DASHSCOPE_API_KEY}
+
   data:
     redis:
       host: ${REDIS_HOST:localhost}
@@ -42,6 +48,17 @@ opschat:
   router:
     enabled: true
     llm-model: qwen-plus
+
+  # 腾讯云日志服务配置
+  qcloud:
+    cls:
+      enabled: ${QCLOUD_CLS_ENABLED:false}
+      secret-id: ${QCLOUD_SECRET_ID}
+      secret-key: ${QCLOUD_SECRET_KEY}
+      region: ${QCLOUD_REGION:ap-beijing}
+      default-topic-id: ${QCLOUD_CLS_TOPIC_ID}
+      default-limit: 50
+      timeout: 30
 
 logging:
   level:
