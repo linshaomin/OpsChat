@@ -153,6 +153,11 @@ public class SessionService {
         userMsg.put("content", userQuestion);
         messageHistory.add(userMsg);
 
+        // 如果是第一条消息，更新会话标题
+        if (messageHistory.size() == 1) {
+            session.updateTitle(userQuestion);
+        }
+
         Map<String, String> assistantMsg = new HashMap<>();
         assistantMsg.put("role", "assistant");
         assistantMsg.put("content", aiAnswer);
@@ -277,24 +282,51 @@ public class SessionService {
     @Data
     public static class SessionInfo {
         private String sessionId;
+        private String title;
         private List<Map<String, String>> messageHistory;
         private long createTime;
 
         public SessionInfo() {
             this.messageHistory = new ArrayList<>();
             this.createTime = System.currentTimeMillis();
+            this.title = generateDefaultTitle();
         }
 
         public SessionInfo(String sessionId) {
             this.sessionId = sessionId;
             this.messageHistory = new ArrayList<>();
             this.createTime = System.currentTimeMillis();
+            this.title = generateDefaultTitle();
         }
 
         public void clearHistory() {
             if (messageHistory != null) {
                 messageHistory.clear();
             }
+            this.title = generateDefaultTitle();
+        }
+
+        /**
+         * 更新会话标题
+         * @param newTitle 新标题
+         */
+        public void updateTitle(String newTitle) {
+            if (newTitle != null && !newTitle.isEmpty()) {
+                this.title = newTitle.length() > 30 ? newTitle.substring(0, 30) + "..." : newTitle;
+            }
+        }
+
+        /**
+         * 删除指定索引的消息
+         * @param index 消息索引
+         * @return 是否删除成功
+         */
+        public boolean deleteMessage(int index) {
+            if (messageHistory != null && index >= 0 && index < messageHistory.size()) {
+                messageHistory.remove(index);
+                return true;
+            }
+            return false;
         }
 
         @JsonIgnore
@@ -302,20 +334,43 @@ public class SessionService {
             return messageHistory != null ? messageHistory.size() / 2 : 0;
         }
 
-        @JsonIgnore
-        public String getTitle() {
-            if (messageHistory == null || messageHistory.isEmpty()) {
-                return "新对话";
+        /**
+         * 生成默认标题（基于时间）
+         */
+        private String generateDefaultTitle() {
+            java.time.LocalDateTime now = java.time.LocalDateTime.now();
+            return "对话 " + now.format(java.time.format.DateTimeFormatter.ofPattern("MM-dd HH:mm"));
+        }
+    }
+
+    /**
+     * 删除会话中的指定消息
+     * @param sessionId 会话ID
+     * @param messageIndex 消息索引
+     * @return 是否删除成功
+     */
+    public boolean deleteMessage(String sessionId, int messageIndex) {
+        SessionInfo session = getSession(sessionId);
+        if (session != null) {
+            boolean success = session.deleteMessage(messageIndex);
+            if (success) {
+                saveSession(session);
             }
-            for (Map<String, String> msg : messageHistory) {
-                if ("user".equals(msg.get("role"))) {
-                    String content = msg.get("content");
-                    if (content != null && !content.isEmpty()) {
-                        return content.length() > 30 ? content.substring(0, 30) + "..." : content;
-                    }
-                }
-            }
-            return "新对话";
+            return success;
+        }
+        return false;
+    }
+
+    /**
+     * 更新会话标题
+     * @param sessionId 会话ID
+     * @param title 新标题
+     */
+    public void updateSessionTitle(String sessionId, String title) {
+        SessionInfo session = getSession(sessionId);
+        if (session != null) {
+            session.updateTitle(title);
+            saveSession(session);
         }
     }
 }

@@ -179,6 +179,23 @@ public class ChatController {
     }
 
     /**
+     * 删除会话中的指定消息
+     * @param sessionId 会话ID
+     * @param messageIndex 消息索引
+     * @return 响应
+     */
+    @DeleteMapping("/sessions/{sessionId}/messages/{messageIndex}")
+    public ResponseEntity<ApiResponse<Void>> deleteMessage(@PathVariable String sessionId, 
+                                                           @PathVariable int messageIndex) {
+        boolean success = sessionService.deleteMessage(sessionId, messageIndex);
+        if (success) {
+            return ResponseEntity.ok(ApiResponse.success(null));
+        } else {
+            return ResponseEntity.ok(ApiResponse.error("删除消息失败"));
+        }
+    }
+
+    /**
      * 健康检查接口
      * @return 健康状态
      */
